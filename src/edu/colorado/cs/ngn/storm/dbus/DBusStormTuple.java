@@ -1,10 +1,10 @@
 package edu.colorado.cs.ngn.storm.dbus;
 
+import java.util.List;
+
 import org.freedesktop.dbus.DBusInterface;
 
-import backtype.storm.tuple.Tuple;
-
 public interface DBusStormTuple extends DBusInterface {
-	public Tuple Data();
+	public List<Object> Data();
 //	public StormTupleWrapper Data(String address);
 }

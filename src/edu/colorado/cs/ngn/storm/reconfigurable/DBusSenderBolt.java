@@ -55,9 +55,9 @@ public class DBusSenderBolt extends BaseRichBolt {
 		connection.disconnect();
 		execService.shutdown();
 		try {
-			execService.awaitTermination(DBusReceiverBolt.SHUTDOWN_TIMEOUT, TimeUnit.MILLISECONDS);
+			execService.awaitTermination(DBusReceiverSpout.SHUTDOWN_TIMEOUT, TimeUnit.MILLISECONDS);
 		} catch (InterruptedException e) {
-			System.out.println("Could not shutdown executor service in "+DBusReceiverBolt.SHUTDOWN_TIMEOUT+" ms in DBusSenderBolt");
+			System.out.println("Could not shutdown executor service in "+DBusReceiverSpout.SHUTDOWN_TIMEOUT+" ms in "+this.getClass().getCanonicalName());
 		}
 	}
 	
@@ -74,17 +74,20 @@ public class DBusSenderBolt extends BaseRichBolt {
 		public void run() {
 			ByteArrayOutputStream bos = new ByteArrayOutputStream();
 			ObjectOutput out = null;
+			byte[] objectBytes;
 			try{
+				
 				out = new ObjectOutputStream(bos);
-				out.writeObject(tuple);
-				byte[] objectbytes = bos.toByteArray();
-				TupleSignal tupleSignal = new TupleSignal("/edu/colorado/cs/ngn/storm/reconfigurable/DBusSenderBolt", objectbytes);
+				out.writeObject(tuple.getValues().get(0));
+				objectBytes = bos.toByteArray();
+				
+				TupleSignal tupleSignal = new TupleSignal("/edu/colorado/cs/ngn/storm/reconfigurable/DBusSenderBolt", objectBytes, tuple.getValues().size());
 				connection.sendSignal(tupleSignal);
-			} catch (DBusException e) {
-				System.out.println("Could not create TupleSignal");
-				e.printStackTrace();
 			} catch (IOException e) {
 				System.out.println("Could not create ObjectOutputStream or write object to byte array");
+				e.printStackTrace();
+			} catch (DBusException e) {
+				System.out.println("Could not create TupleSignal");
 				e.printStackTrace();
 			} finally{
 				if(out != null){
@@ -96,10 +99,7 @@ public class DBusSenderBolt extends BaseRichBolt {
 					bos.close();
 				} catch (IOException e) {}
 			}
-			
-			
 		}
-		
 	}
 
 }
