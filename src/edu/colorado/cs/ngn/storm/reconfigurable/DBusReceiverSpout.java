@@ -1,9 +1,12 @@
 package edu.colorado.cs.ngn.storm.reconfigurable;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectInputStream;
+import java.io.ObjectOutput;
+import java.io.ObjectOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -11,7 +14,10 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.apache.commons.codec.binary.Base64;
+import org.freedesktop.dbus.DBusAsyncReply;
 import org.freedesktop.dbus.DBusConnection;
 import org.freedesktop.dbus.DBusSigHandler;
 import org.freedesktop.dbus.exceptions.DBusException;
@@ -26,6 +32,7 @@ import backtype.storm.topology.OutputFieldsDeclarer;
 import backtype.storm.topology.TopologyBuilder;
 import backtype.storm.topology.base.BaseRichSpout;
 import backtype.storm.tuple.Fields;
+import edu.colorado.cs.ngn.sdipc.Switch;
 import edu.colorado.cs.ngn.storm.dbus.StormTupleSignal;
 import edu.colorado.cs.ngn.storm.dbus.StormTupleSignal.TupleSignal;
 
@@ -54,18 +61,6 @@ public class DBusReceiverSpout extends BaseRichSpout {
 	 */
 	public final static String CONNECTION_ID = "edu.colorado.cs.ngn.sdipc.Switch";
 	
-//	@Override
-//	public void nextTuple() {
-//		// TODO Auto-generated method stub
-//		
-//	}
-
-//	@Override
-//	public void open(Map arg0, TopologyContext arg1, SpoutOutputCollector arg2) {
-//		// TODO Auto-generated method stub
-//		
-//	}
-	
 	@Override
 	public void nextTuple() {
 		if(!tupleQueue.isEmpty()){
@@ -76,7 +71,7 @@ public class DBusReceiverSpout extends BaseRichSpout {
 	}
 
 	@Override
-	public void open(Map arg0, TopologyContext arg1, SpoutOutputCollector arg2) {
+	public void open(@SuppressWarnings("rawtypes") Map arg0, TopologyContext arg1, SpoutOutputCollector arg2) {
 		//need to connect to DBus with some id
 		tupleQueue = new ConcurrentLinkedQueue<List<Object>>();
 		execService = Executors.newCachedThreadPool();
@@ -104,10 +99,62 @@ public class DBusReceiverSpout extends BaseRichSpout {
 		super.close();
 	}
 	
+	public static List<Object> unflattenDBusList(String objectList){
+		ByteArrayInputStream bis = new ByteArrayInputStream(Base64.decodeBase64(objectList));
+		ObjectInput in = null;
+		List<Object> list = null;
+		try {
+			in = new ObjectInputStream(bis);
+			list = (List<Object>) in.readObject();
+		} catch (IOException e) {
+			System.out.println("Could not creare ObjectInputStream");
+			e.printStackTrace();
+		} catch (ClassNotFoundException e) {
+			System.out.println("Could not create class from byte array");
+			e.printStackTrace();
+		} finally{
+			try {
+				bis.close();
+			} catch (IOException e) {}
+			
+			if(in != null){
+				try {
+					in.close();
+				} catch (IOException e) {}
+			}
+		}
+		return list;
+	}
+	
+	public static String flattenDBusList(List<Object> objectList){
+		ByteArrayOutputStream bos = new ByteArrayOutputStream();
+		ObjectOutput out = null;
+		byte[] objectBytes = null;
+		try{
+			
+			out = new ObjectOutputStream(bos);
+			out.writeObject(objectList);
+			objectBytes = bos.toByteArray();
+		} catch (IOException e) {
+			System.out.println("Could not create ObjectOutputStream or write object to byte array");
+			e.printStackTrace();
+		} finally{
+			if(out != null){
+				try {
+					out.close();
+				} catch (IOException e) {}
+			}
+			try {
+				bos.close();
+			} catch (IOException e) {}
+		}
+		return Base64.encodeBase64String(objectBytes);
+	}
+	
 	private class DBusReceiverTask implements Runnable{
 
 		private DBusConnection connection = null;
-//		private AtomicBoolean boltExecuting = new AtomicBoolean(true);
+		private AtomicBoolean boltExecuting = new AtomicBoolean(true);
 		private DBusReceiverSpout receiverSpout;
 		
 		public DBusReceiverTask(DBusReceiverSpout receiverSpout){
@@ -122,64 +169,28 @@ public class DBusReceiverSpout extends BaseRichSpout {
 				System.out.println("Could not connect to the DBus");
 				e.printStackTrace();
 			}
-			try {
-				connection.addSigHandler(StormTupleSignal.TupleSignal.class, new StormTupleSignalHandler(receiverSpout));
-			} catch (DBusException e) {
-				System.out.println("Could not create signal handler on DBus");
-				e.printStackTrace();
+			while(boltExecuting.get()){
+				try {
+					Switch dbusSwitch = connection.getRemoteObject(DBusReceiverSpout.CONNECTION_ID, "/edu/colorado/cs/ngn/sdipc/Switch", Switch.class);
+//					DBusAsyncReply<String> reply = connection.callMethodAsync(dbusSwitch, "dequeue");
+					String data = dbusSwitch.dequeue();
+					if(data.length() > 0){
+						List<Object> receivedTuple = DBusReceiverSpout.unflattenDBusList(data);
+						if(receivedTuple != null){
+							receiverSpout.tupleQueue.add(receivedTuple);
+						}
+					}
+				} catch (DBusException e) {
+					System.out.println("Could not get remote object: "+DBusReceiverSpout.CONNECTION_ID);
+					e.printStackTrace();
+				}
 			}
-			
 		}
 
 		public void shutdown() {
-//			boltExecuting.set(false);
+			boltExecuting.set(false);
 			connection.disconnect();
 		}
-		
-	}
-	
-	private class StormTupleSignalHandler implements DBusSigHandler<StormTupleSignal.TupleSignal>{
-		private DBusReceiverSpout receiverSpout;
-		
-		public StormTupleSignalHandler(DBusReceiverSpout receiverSpout){
-			this.receiverSpout = receiverSpout;
-		}
-
-		@Override
-		public void handle(TupleSignal s) {
-			byte[] objectData = s.objectData;
-			int objectCount = s.objectCount;
-			List<Object> objectList; //= new ArrayList<Object>();
-			ByteArrayInputStream bis = new ByteArrayInputStream(objectData);
-			ObjectInput in = null;
-			try {
-				in = new ObjectInputStream(bis);
-				Object o = in.readObject();
-//				objectList.add(o);
-				objectList = (List<Object>) o;
-//					List<Object> receivedTuple = (List<Object>) o;
-//				receiverBolt.emitTuple(receivedTuple);
-				receiverSpout.tupleQueue.add(objectList);
-			} catch (IOException e) {
-				System.out.println("Could not read object array");
-				e.printStackTrace();
-			} catch (ClassNotFoundException e) {
-				System.out.println("Could not create object from object array");
-				e.printStackTrace();
-			} finally{
-				try {
-					bis.close();
-				} catch (IOException e) {}
-				
-				if(in != null){
-					try {
-						in.close();
-					} catch (IOException e) {}
-				}
-			}
-			
-		}
-		
 	}
 	
 	public static void main(String[] args) throws AlreadyAliveException, InvalidTopologyException{
@@ -191,7 +202,7 @@ public class DBusReceiverSpout extends BaseRichSpout {
 		
 		Config conf = new Config();
 		conf.setNumWorkers(1);
-		conf.setDebug(true);
+//		conf.setDebug(true);
 		
 		StormSubmitter.submitTopology("dbus_test_topology", conf, builder.createTopology());
 	}

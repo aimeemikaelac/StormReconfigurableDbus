@@ -1,9 +1,6 @@
 package edu.colorado.cs.ngn.storm.reconfigurable;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.ObjectOutput;
-import java.io.ObjectOutputStream;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -12,13 +9,12 @@ import java.util.concurrent.TimeUnit;
 import org.freedesktop.dbus.DBusConnection;
 import org.freedesktop.dbus.exceptions.DBusException;
 
-import edu.colorado.cs.ngn.storm.dbus.StormTupleSignal.TupleSignal;
-
 import backtype.storm.task.OutputCollector;
 import backtype.storm.task.TopologyContext;
 import backtype.storm.topology.OutputFieldsDeclarer;
 import backtype.storm.topology.base.BaseRichBolt;
 import backtype.storm.tuple.Tuple;
+import edu.colorado.cs.ngn.sdipc.Switch;
 
 public class DBusSenderBolt extends BaseRichBolt {
 	/**
@@ -46,8 +42,6 @@ public class DBusSenderBolt extends BaseRichBolt {
 
 	@Override
 	public void declareOutputFields(OutputFieldsDeclarer arg0) {
-		// TODO Auto-generated method stub
-
 	}
 	
 	@Override
@@ -72,33 +66,17 @@ public class DBusSenderBolt extends BaseRichBolt {
 
 		@Override
 		public void run() {
-			ByteArrayOutputStream bos = new ByteArrayOutputStream();
-			ObjectOutput out = null;
-			byte[] objectBytes;
-			try{
-				
-				out = new ObjectOutputStream(bos);
-				out.writeObject(tuple.getValues().get(0));
-				objectBytes = bos.toByteArray();
-				
-				TupleSignal tupleSignal = new TupleSignal("/edu/colorado/cs/ngn/storm/reconfigurable/DBusSenderBolt", objectBytes, tuple.getValues().size());
-				connection.sendSignal(tupleSignal);
-			} catch (IOException e) {
-				System.out.println("Could not create ObjectOutputStream or write object to byte array");
-				e.printStackTrace();
-			} catch (DBusException e) {
-				System.out.println("Could not create TupleSignal");
-				e.printStackTrace();
-			} finally{
-				if(out != null){
-					try {
-						out.close();
-					} catch (IOException e) {}
+			try {
+				Switch dbusSwitch = connection.getRemoteObject(DBusReceiverSpout.CONNECTION_ID, "/edu/colorado/cs/ngn/sdipc/Switch", Switch.class);
+				String objectStringBytes = DBusReceiverSpout.flattenDBusList((List<Object>) tuple.getValues().get(0));
+				if(objectStringBytes != null){
+					dbusSwitch.engueue(objectStringBytes);
 				}
-				try {
-					bos.close();
-				} catch (IOException e) {}
+			} catch (DBusException e) {
+				System.out.println("Could not get remote object: "+DBusReceiverSpout.CONNECTION_ID);
+				e.printStackTrace();
 			}
+			
 		}
 	}
 
