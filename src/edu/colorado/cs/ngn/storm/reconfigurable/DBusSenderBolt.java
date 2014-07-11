@@ -14,7 +14,7 @@ import backtype.storm.task.TopologyContext;
 import backtype.storm.topology.OutputFieldsDeclarer;
 import backtype.storm.topology.base.BaseRichBolt;
 import backtype.storm.tuple.Tuple;
-import edu.colorado.cs.ngn.sdipc.Switch;
+import edu.colorado.cs.ngn.sdihc.Switch;
 
 public class DBusSenderBolt extends BaseRichBolt {
 	/**
@@ -67,11 +67,13 @@ public class DBusSenderBolt extends BaseRichBolt {
 		@Override
 		public void run() {
 			try {
-				Switch dbusSwitch = connection.getRemoteObject(DBusReceiverSpout.CONNECTION_ID, "/edu/colorado/cs/ngn/sdipc/Switch", Switch.class);
-				String objectStringBytes = DBusReceiverSpout.flattenDBusList((List<Object>) tuple.getValues().get(0));
-				if(objectStringBytes != null){
-					dbusSwitch.engueue(objectStringBytes);
-				}
+//				Switch dbusSwitch = connection.getRemoteObject(DBusReceiverSpout.CONNECTION_ID, "/edu/colorado/cs/ngn/sdipc/Switch", Switch.class);
+				Switch dbusSwitch = connection.getRemoteObject(DBusReceiverSpout.CONNECTION_ID, DBusReceiverSpout.SWITCH_OBJECT_PATH, Switch.class);
+//				String objectStringBytes = DBusReceiverSpout.flattenDBusList((List<Object>) tuple.getValues().get(0));
+//				if(objectStringBytes != null){
+//					dbusSwitch.engueue(objectStringBytes);
+//				}
+//				System.out.println("Received data: " + tuple.getValues().get(0));
 			} catch (DBusException e) {
 				System.out.println("Could not get remote object: "+DBusReceiverSpout.CONNECTION_ID);
 				e.printStackTrace();
