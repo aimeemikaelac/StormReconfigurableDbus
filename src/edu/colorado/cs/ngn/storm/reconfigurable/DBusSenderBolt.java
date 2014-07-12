@@ -23,10 +23,15 @@ public class DBusSenderBolt extends BaseRichBolt {
 	private static final long serialVersionUID = 1L;
 	private ExecutorService execService;
 	private DBusConnection connection;
+	private String pe_id;
+	
+	public DBusSenderBolt(String pe_id){
+		this.pe_id = pe_id;
+	}
 	
 	@Override
 	public void execute(Tuple arg0) {
-		execService.execute(new DBusSenderTask(connection, arg0));
+		execService.execute(new DBusSenderTask(connection, arg0, pe_id));
 	}
 
 	@Override
@@ -58,10 +63,12 @@ public class DBusSenderBolt extends BaseRichBolt {
 	private class DBusSenderTask implements Runnable{
 		private DBusConnection connection;
 		private Tuple tuple;
+		private String pe_id;
 		
-		public DBusSenderTask(DBusConnection connection, Tuple tuple){
+		public DBusSenderTask(DBusConnection connection, Tuple tuple, String pe_id){
 			this.connection = connection;
 			this.tuple = tuple;
+			this.pe_id = pe_id;
 		}
 
 		@Override
@@ -69,14 +76,14 @@ public class DBusSenderBolt extends BaseRichBolt {
 			try {
 //				Switch dbusSwitch = connection.getRemoteObject(DBusReceiverSpout.CONNECTION_ID, "/edu/colorado/cs/ngn/sdipc/Switch", Switch.class);
 				Switch dbusSwitch = connection.getRemoteObject(DBusReceiverSpout.CONNECTION_ID, DBusReceiverSpout.SWITCH_OBJECT_PATH, Switch.class);
-//				String objectStringBytes = DBusReceiverSpout.flattenDBusList((List<Object>) tuple.getValues().get(0));
-//				if(objectStringBytes != null){
-//					dbusSwitch.engueue(objectStringBytes);
-//				}
+				String objectStringBytes = DBusReceiverSpout.flattenDBusList((List<Object>) tuple.getValues().get(0));
+				connection.callMethodAsync(dbusSwitch, "Enqueue", pe_id, objectStringBytes);
 //				System.out.println("Received data: " + tuple.getValues().get(0));
 			} catch (DBusException e) {
 				System.out.println("Could not get remote object: "+DBusReceiverSpout.CONNECTION_ID);
 				e.printStackTrace();
+			} catch(java.lang.ExceptionInInitializerError e){
+			} catch(java.lang.NoClassDefFoundError e){
 			}
 			
 		}

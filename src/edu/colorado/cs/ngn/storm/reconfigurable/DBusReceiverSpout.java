@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.codec.binary.Base64;
+import org.freedesktop.dbus.DBusAsyncReply;
 import org.freedesktop.dbus.DBusConnection;
 import org.freedesktop.dbus.exceptions.DBusException;
 
@@ -52,12 +53,18 @@ public class DBusReceiverSpout extends BaseRichSpout {
 	private ConcurrentLinkedQueue<List<Object>> tupleQueue;
 	private SpoutOutputCollector collector;
 	private ExecutorService execService;
+	private String pe_id;
 	public final static int SHUTDOWN_TIMEOUT = 5000;
 	/**
 	 * id of dbus system to connect to
 	 * TODO: verify this address
 	 */
 	public final static String CONNECTION_ID = "edu.colorado.cs.ngn.sdihc.Switch";
+	
+	public DBusReceiverSpout(String pe_id){
+		super();
+		this.pe_id = pe_id;
+	}
 	
 	@Override
 	public void nextTuple() {
@@ -78,7 +85,7 @@ public class DBusReceiverSpout extends BaseRichSpout {
 	}
 
 	private void launch_dbus_receiver() {
-		dbusReceiver = new DBusReceiverTask(this);
+		dbusReceiver = new DBusReceiverTask(this, pe_id);
 		execService.execute(dbusReceiver);
 	}
 
@@ -154,9 +161,11 @@ public class DBusReceiverSpout extends BaseRichSpout {
 		private DBusConnection connection = null;
 		private AtomicBoolean boltExecuting = new AtomicBoolean(true);
 		private DBusReceiverSpout receiverSpout;
+		private String pe_id;
 		
-		public DBusReceiverTask(DBusReceiverSpout receiverSpout){
+		public DBusReceiverTask(DBusReceiverSpout receiverSpout, String pe_id){
 			this.receiverSpout = receiverSpout;
+			this.pe_id = pe_id;
 		}
 		
 		@Override
@@ -168,27 +177,41 @@ public class DBusReceiverSpout extends BaseRichSpout {
 				System.out.println("Could not connect to the DBus");
 				e.printStackTrace();
 			}
-			while(boltExecuting.get()){
-				try {
-//					Switch dbusSwitch = connection.getRemoteObject(DBusReceiverSpout.CONNECTION_ID, "/edu/colorado/cs/ngn/sdipc/Switch", Switch.class);
-					Switch dbusSwitch = connection.getRemoteObject(DBusReceiverSpout.CONNECTION_ID, DBusReceiverSpout.SWITCH_OBJECT_PATH, Switch.class);
-//					DBusAsyncReply<String> reply = connection.callMethodAsync(dbusSwitch, "dequeue");
-					String data = dbusSwitch.Dequeue();
-//					if(data.length() > 0){
-//						List<Object> receivedTuple = DBusReceiverSpout.unflattenDBusList(data);
-//						if(receivedTuple != null){
-//							receiverSpout.tupleQueue.add(receivedTuple);
-//						}
-//					}
-//					System.out.println("Received data from dbus: "+data);
-					List<Object> tuple = new ArrayList<Object>();
-					tuple.add(data);
-					receiverSpout.tupleQueue.add(tuple);
-				} catch (DBusException e) {
-					System.out.println("Could not get remote object: "+DBusReceiverSpout.CONNECTION_ID);
-					e.printStackTrace();
+			Switch dbusSwitch;
+			try {
+				dbusSwitch = connection.getRemoteObject(DBusReceiverSpout.CONNECTION_ID, DBusReceiverSpout.SWITCH_OBJECT_PATH, Switch.class);
+				while(boltExecuting.get()){
+					try {
+//						Switch dbusSwitch = connection.getRemoteObject(DBusReceiverSpout.CONNECTION_ID, "/edu/colorado/cs/ngn/sdipc/Switch", Switch.class);
+						
+//						String data = dbusSwitch.Dequeue(pe_id);
+						DBusAsyncReply<String> reply = connection.callMethodAsync(dbusSwitch, "Dequeue", pe_id);
+						
+						Thread.sleep(5000);
+						
+						String data = reply.getReply();
+						
+						if(data.length() > 0){
+							List<Object> receivedTuple = DBusReceiverSpout.unflattenDBusList(data);
+							if(receivedTuple != null){
+								receiverSpout.tupleQueue.add(receivedTuple);
+							}
+						}
+						System.out.println("Received data from dbus: "+data);
+//						List<Object> tuple = new ArrayList<Object>();
+//						tuple.add(data);
+//						receiverSpout.tupleQueue.add(tuple);
+					} catch(java.lang.ExceptionInInitializerError e){
+					} catch(java.lang.NoClassDefFoundError e){
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
 				}
+			} catch (DBusException e1) {
+				//is ok if we could not parse an object. Just try again on the next iteration
+				System.out.println("Could not get remote object: "+DBusReceiverSpout.CONNECTION_ID);
 			}
+			
 		}
 
 		public void shutdown() {
@@ -200,9 +223,17 @@ public class DBusReceiverSpout extends BaseRichSpout {
 	public static void main(String[] args) throws AlreadyAliveException, InvalidTopologyException{
 		TopologyBuilder builder = new TopologyBuilder();
 		
-		builder.setSpout("a", new DBusReceiverSpout(), 1);
+		builder.setSpout("w1_recv", new DBusReceiverSpout("w1"), 1);
+		builder.setBolt("w1_send", new DBusSenderBolt("w2"), 1).shuffleGrouping("w1_recv");
 		
-		builder.setBolt("b", new DBusSenderBolt(), 1).shuffleGrouping("a");
+		builder.setSpout("w2_recv", new DBusReceiverSpout("w2"), 1);
+		builder.setBolt("w2_send", new DBusSenderBolt("w2"), 1).shuffleGrouping("w2_recv");
+		
+		builder.setSpout("w3_recv", new DBusReceiverSpout("w3"), 1);
+		builder.setBolt("w3_send", new DBusSenderBolt("w3"), 1).shuffleGrouping("w3_recv");
+		
+		builder.setSpout("w4_recv", new DBusReceiverSpout("w4"), 1);
+		builder.setBolt("w4_send", new DBusSenderBolt("w4"), 1).shuffleGrouping("w4_recv");
 		
 		Config conf = new Config();
 		conf.setNumWorkers(1);
